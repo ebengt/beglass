@@ -110,7 +110,7 @@ defmodule Beglass.Pyramid do
   end
 
   defp new_time(state, {:add_liquid, volume}),
-    do: {%{state | time: state.time + 1}, {:add_liquid, volume}}
+    do: {%{state | time: state.time + volume}, {:add_liquid, volume}}
 
   defp new_time(state, {:add_liquid, volume, time}),
     do: {%{state | time: time}, {:add_liquid, volume}}
