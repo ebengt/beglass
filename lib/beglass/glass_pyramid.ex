@@ -5,6 +5,7 @@ defmodule Beglass.Pyramid do
 
   defstruct [
     :left_glass,
+    :observer,
     :position,
     :right_glass,
     liquid: 0,
@@ -22,13 +23,15 @@ defmodule Beglass.Pyramid do
   def time(pid), do: call(pid, {:time})
 
   def start_link(%{rows: r}) do
-    state = init(%__MODULE__{}, r, 1, 1)
+    state = init(%__MODULE__{observer: Kernel.self()}, r, 1, 1)
     Task.start_link(fn -> loop(state) end)
   end
 
   #
   # Internal functions
   #
+
+  def add_liquid_time(pid, volume, time), do: cast(pid, {:add_liquid, volume, time})
 
   defp call(pid, request) do
     Kernel.send(pid, {:call, Kernel.self(), request})
@@ -69,21 +72,48 @@ defmodule Beglass.Pyramid do
           state
 
         {:cast, request} ->
-          new_state(request, state)
+          state |> new_time(request) |> new_state()
       end
 
     loop(new)
   end
 
-  defp new_state({:add_liquid, volume}, state),
-    do: %{state | liquid: state.liquid + volume, time: state.time + 1} |> new_state_owerflow()
+  defp new_state({%__MODULE__{overflow: false} = state, {:add_liquid, volume}}),
+    do: %{state | liquid: state.liquid + volume} |> new_state_overflow()
 
-  defp new_state_owerflow(%{owner: o, volume: v, max: m} = state) when v > m do
-    Kernel.send(o, {:overflow, Kernel.self()})
-    Map.put(state, :overflow, true)
+  defp new_state(
+         {%__MODULE__{overflow: true, left_glass: nil, right_glass: nil} = state,
+          {:add_liquid, _volume}}
+       ),
+       do: state
+
+  defp new_state({state, {:add_liquid, volume}}) do
+    volume_to_each = volume / 2
+    add_liquid_time(state.left_glass, volume_to_each, state.time)
+    add_liquid_time(state.right_glass, volume_to_each, state.time)
+    state
   end
 
-  defp new_state_owerflow(state), do: state
+  defp new_state_overflow(%__MODULE__{liquid: l, volume: max} = state) when l < max, do: state
+
+  defp new_state_overflow(%__MODULE__{left_glass: nil, right_glass: nil} = state) do
+    Kernel.send(state.observer, {:overflow, Kernel.self(), state.time})
+    %{state | overflow: true, liquid: state.volume}
+  end
+
+  defp new_state_overflow(state) do
+    Kernel.send(state.observer, {:overflow, Kernel.self(), state.time})
+    volume_to_each = (state.liquid - state.volume) / 2
+    add_liquid_time(state.left_glass, volume_to_each, state.time)
+    add_liquid_time(state.right_glass, volume_to_each, state.time)
+    %{state | overflow: true, liquid: state.volume}
+  end
+
+  defp new_time(state, {:add_liquid, volume}),
+    do: {%{state | time: state.time + 1}, {:add_liquid, volume}}
+
+  defp new_time(state, {:add_liquid, volume, time}),
+    do: {%{state | time: time}, {:add_liquid, volume}}
 
   defp response({:liquid}, %{liquid: l}), do: l
 
